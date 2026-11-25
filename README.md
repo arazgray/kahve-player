@@ -31,12 +31,16 @@ Press `O` to open files, `Space` to play or pause, `[` / `]` to move through the
 
 On Kubuntu, right-click a supported file in Dolphin and choose **Open With → Kahve Player**. If Chrome asks whether Kahve can open the file, choose **Allow**. If an older installation still opens an empty window or isn’t listed, reinstall Kahve from Chrome to register its file types. Keep site data if you want to retain saved playlists.
 
+If Chrome can’t read a file handed off by Dolphin, Kahve offers **Try again** and **Browse files**. For an external drive, make sure it’s mounted and try picking the file directly from Kahve.
+
 Open Kahve once while online so Chrome can cache the app and all its bundled assets. After that, the installed app and browser page can open local media, inspect metadata, and load saved local playlists offline. Remote stream URLs still need a connection.
 
 <details>
 <summary>Codec, HDR, and streaming limits</summary>
 
 Kahve uses Chrome’s media engine, so codec and HDR output depend on the browser, OS, graphics hardware, and display. The HDR menu selects an available stream rendition; it does not force HDR for a local file or direct link. Chrome may not expose separate embedded audio tracks in local files. Cross-origin HLS and DASH need a server that allows browser access. Kahve doesn’t transcode media or configure DRM licenses.
+
+HLS and DASH aim to buffer about 45 seconds ahead when the stream and browser allow it. Chrome controls buffering for local files and direct video links. If a large local file still stalls, try the same file on an internal SSD; if that doesn’t help, check whether Chrome can hardware-decode that codec on your system.
 
 </details>
 

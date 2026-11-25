@@ -6,6 +6,7 @@ import { makeDashPlayer, makeHlsPlayer } from './adaptive.js';
 import { createImageViewer } from './image-viewer.js';
 import { collectFiles, collectFolderImages, imageFormat, isImageFile } from './playlist.js';
 import { deleteSavedPlaylist, listSavedPlaylists, loadSavedPlaylist, savePlaylist } from './playlist-library.js';
+import { isDesktopPermissionError, readDesktopFile } from './desktop-files.js';
 import logoUrl from '../Kahve.png?url';
 import './style.css';
 
@@ -109,6 +110,17 @@ document.querySelector('#app').innerHTML = `
             <a href="https://arazgray.com" target="_blank" rel="noopener noreferrer">Made by Araz Gray</a>
           </div>
         </dialog>
+        <dialog id="desktop-file-dialog" class="dialog" aria-labelledby="desktop-file-title">
+          <div class="dialog-header">
+            <div><h2 id="desktop-file-title">Can’t open the desktop file</h2><p id="desktop-file-name" class="video-info-name"></p></div>
+            ${iconButton('close-desktop-file', 'Close file access help', 'X', 'data-close')}
+          </div>
+          <p class="dialog-note" id="desktop-file-reason" role="status"></p>
+          <div class="dialog-actions desktop-file-actions">
+            <button type="button" class="toolbar-button" id="desktop-file-retry">Try again</button>
+            <button type="button" class="primary-button" id="desktop-file-browse">${icon('FolderOpen')} Browse files</button>
+          </div>
+        </dialog>
   </main>
   <input id="file-input" type="file" accept="video/*,audio/*,image/*,.mkv,.mov,.mp4,.m4v,.webm,.ogv,.avi,.ts" multiple hidden>
   <input id="folder-input" type="file" webkitdirectory multiple hidden>
@@ -157,6 +169,7 @@ const seek = $('seek');
 const menu = $('player-menu');
 const streamDialog = $('stream-dialog');
 const infoDialog = $('video-info-dialog');
+const desktopFileDialog = $('desktop-file-dialog');
 const imageViewport = $('image-viewer');
 const imageViewer = createImageViewer(imageViewport);
 let imageSize = null;
@@ -186,6 +199,7 @@ let activeExternal = null;
 let localUrl = '';
 let toastTimer;
 let controlsTimer;
+let bufferingTimer;
 let installPrompt;
 let previousVolume = 1;
 let dragDepth = 0;
@@ -365,10 +379,26 @@ function notify(text) {
 function playbackError(text) {
   failed = true;
   loading = false;
+  clearBufferingMessage();
   message(text, 'error');
   wakeControls();
   updateControls();
   renderVideoInfo();
+}
+
+function clearBufferingMessage() {
+  clearTimeout(bufferingTimer);
+  if ($('stage-message').dataset.type === 'buffering') message();
+}
+
+function scheduleBufferingMessage() {
+  clearTimeout(bufferingTimer);
+  const request = sourceRequest;
+  if (!source || source.kind === 'image' || loading || failed || video.paused) return;
+  bufferingTimer = setTimeout(() => {
+    if (request !== sourceRequest || video.paused || video.readyState >= 3 || loading || failed) return;
+    message(source.kind === 'local' ? 'Waiting for Chrome to read or decode the file…' : 'Buffering stream…', 'buffering');
+  }, 750);
 }
 
 async function togglePlay() {
@@ -521,6 +551,7 @@ function loadSource(next, { autoplay = false } = {}) {
   // Destroy immediately to interrupt an in-flight manifest load while serializing new attachments.
   const stop = previous?.destroy().catch(() => {});
   streamPlayer = null;
+  clearBufferingMessage();
   imageViewer.cancelPending();
   if (next?.kind !== 'image') imageViewer.clear();
   imageSize = null;
@@ -1240,11 +1271,18 @@ for (const type of mediaEvents) video.addEventListener(type, updateControls);
 for (const type of ['loadedmetadata', 'resize']) video.addEventListener(type, refreshMusicMode);
 for (const type of ['loadedmetadata', 'resize', 'durationchange']) video.addEventListener(type, renderVideoInfo);
 video.addEventListener('playing', () => {
+  clearBufferingMessage();
   hasPlayed = true;
   wakeControls();
 });
-video.addEventListener('pause', wakeControls);
+video.addEventListener('canplay', clearBufferingMessage);
+video.addEventListener('waiting', scheduleBufferingMessage);
+video.addEventListener('pause', () => {
+  clearBufferingMessage();
+  wakeControls();
+});
 video.addEventListener('ended', () => {
+  clearBufferingMessage();
   wakeControls();
   if (source && source.kind !== 'image' && !loading && video.ended) movePlaylist(1);
 });
@@ -1469,16 +1507,62 @@ updateControls();
 const controls = stage.querySelector('.controls');
 new ResizeObserver(() => stage.style.setProperty('--controls-height', `${controls.offsetHeight}px`)).observe(controls);
 
-// Chrome delivers desktop “Open With” files here, including on a cold launch.
 let desktopLaunch = 0;
-window.launchQueue?.setConsumer(async ({ files: handles }) => {
-  if (!handles?.length) return;
+let desktopFailure = null;
+
+function showDesktopFailure(entries) {
+  desktopFailure = entries;
+  const permissionDenied = entries.some(({ error }) => isDesktopPermissionError(error));
+  const retryWithPermission = entries.some(({ handle, error }) => isDesktopPermissionError(error)
+    && typeof handle.requestPermission === 'function');
+  $('desktop-file-name').textContent = entries.length === 1 ? entries[0].handle.name || '' : `${entries.length} files`;
+  $('desktop-file-reason').textContent = permissionDenied
+    ? 'Chrome did not grant read access from your desktop. Try again or choose the file directly in Kahve.'
+    : 'Chrome couldn’t read the file from your desktop. If it’s on an external drive, make sure the drive is mounted, then try again or browse to the file.';
+  const button = $('desktop-file-retry');
+  button.disabled = false;
+  button.textContent = retryWithPermission ? 'Allow and retry' : 'Try again';
+  if (!desktopFileDialog.open) desktopFileDialog.showModal();
+}
+
+async function openDesktopFiles(entries, retry = false) {
   const request = ++desktopLaunch;
   const beforeReading = sourceRequest;
-  const results = await Promise.allSettled(handles.map(async (handle) => handle.getFile()));
-  if (request !== desktopLaunch || sourceRequest !== beforeReading) return;
+  const isCurrent = () => request === desktopLaunch && sourceRequest === beforeReading
+    && (!retry || desktopFileDialog.open);
+  const results = await Promise.allSettled(entries.map(({ handle, error }) => readDesktopFile(handle, {
+    isCurrent,
+    ask: retry && isDesktopPermissionError(error),
+  })));
+  if (!isCurrent()) {
+    if (retry && desktopFileDialog.open && request === desktopLaunch) showDesktopFailure(entries);
+    return;
+  }
   const files = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
-  if (!files.length) return notify('Kahve couldn’t read the files opened from your desktop.');
-  await openFiles(files);
-  if (files.length < handles.length) notify('Some of the files opened from your desktop couldn’t be read.');
+  if (files.length) {
+    desktopFailure = null;
+    if (desktopFileDialog.open) desktopFileDialog.close();
+    await openFiles(files);
+    if (files.length < entries.length) notify('Some of the files opened from your desktop couldn’t be read.');
+    return;
+  }
+  showDesktopFailure(results.map((result, index) => ({ handle: entries[index].handle, error: result.reason })));
+}
+
+$('desktop-file-retry').addEventListener('click', () => {
+  if (!desktopFailure?.length) return;
+  $('desktop-file-retry').disabled = true;
+  $('desktop-file-reason').textContent = 'Trying to read the files…';
+  void openDesktopFiles(desktopFailure, true);
+});
+$('desktop-file-browse').addEventListener('click', () => {
+  desktopFileDialog.close();
+  pickFiles();
+});
+desktopFileDialog.addEventListener('close', () => {
+  if (!desktopFileDialog.open) desktopFailure = null;
+});
+// Chrome delivers desktop “Open With” files here, including on a cold launch.
+window.launchQueue?.setConsumer(({ files: handles }) => {
+  if (handles?.length) return openDesktopFiles(handles.map((handle) => ({ handle })));
 });

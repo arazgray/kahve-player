@@ -452,6 +452,14 @@ test('plays dropped media immediately instead of appending during playback', asy
   await expect(page.getByRole('region', { name: 'Playlist' }).locator('.playlist-entry')).toHaveText(['Dropped.mp4']);
 });
 
+async function mockDesktopLaunch(page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'launchQueue', {
+      value: { setConsumer: (consumer) => { window.receiveDesktopLaunch = consumer; } },
+    });
+  });
+}
+
 test('receives files from the installed app launch queue, even offline', async ({ page, context }) => {
   const manifest = await (await page.request.get('/manifest.webmanifest')).json();
   expect(manifest.launch_handler.client_mode).toBe('focus-existing');
@@ -460,11 +468,7 @@ test('receives files from the installed app launch queue, even offline', async (
     accept: { 'video/mp4': ['.mp4', '.m4v'], 'audio/mpeg': ['.mp3'], 'image/png': ['.png'] },
   });
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'launchQueue', {
-      value: { setConsumer: (consumer) => { window.receiveDesktopLaunch = consumer; } },
-    });
-  });
+  await mockDesktopLaunch(page);
   await context.setOffline(true);
   await page.reload();
   await page.evaluate(async ({ name, mimeType, base64 }) => {
@@ -481,4 +485,76 @@ test('receives files from the installed app launch queue, even offline', async (
   await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
   await page.getByRole('button', { name: 'Next item' }).click();
   await expect(page.getByRole('img', { name: 'Desktop.svg' })).toBeVisible();
+});
+
+test('retries a temporary desktop read error and opens the file when it becomes readable', async ({ page }) => {
+  await mockDesktopLaunch(page);
+  await page.reload();
+  const attempts = await page.evaluate(async () => {
+    let attempts = 0;
+    await window.receiveDesktopLaunch({
+      files: [{
+        async getFile() {
+          if (++attempts === 1) throw new DOMException('Drive not ready', 'NotReadableError');
+          return new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'], 'External.svg', { type: 'image/svg+xml' });
+        },
+      }],
+    });
+    return attempts;
+  });
+  expect(attempts).toBe(2);
+  await expect(page.getByRole('img', { name: 'External.svg' })).toBeVisible();
+});
+
+test('asks for permission from the retry button and opens the desktop file', async ({ page }) => {
+  await mockDesktopLaunch(page);
+  await page.reload();
+  await page.evaluate(async () => {
+    let allowed = false;
+    await window.receiveDesktopLaunch({
+      files: [{
+        name: 'Permission.svg',
+        async requestPermission({ mode }) {
+          if (mode !== 'read') throw Error('Only read access is needed.');
+          allowed = true;
+          return 'granted';
+        },
+        async getFile() {
+          if (!allowed) throw new DOMException('Permission required', 'NotAllowedError');
+          return new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'], 'Permission.svg', { type: 'image/svg+xml' });
+        },
+      }],
+    });
+  });
+  const dialog = page.getByRole('dialog', { name: 'Can’t open the desktop file' });
+  await expect(dialog).toContainText('Chrome did not grant read access');
+  await dialog.getByRole('button', { name: 'Allow and retry' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('img', { name: 'Permission.svg' })).toBeVisible();
+});
+
+test('offers the file picker when Chrome still cannot read a file from an external drive', async ({ page }) => {
+  await mockDesktopLaunch(page);
+  await page.reload();
+  await page.evaluate(() => window.receiveDesktopLaunch({
+    files: [{ name: 'External.mp4', async getFile() { throw new DOMException('Drive unavailable', 'NotFoundError'); } }],
+  }));
+  const dialog = page.getByRole('dialog', { name: 'Can’t open the desktop file' });
+  await expect(dialog).toContainText('make sure the drive is mounted');
+  const chooser = page.waitForEvent('filechooser');
+  await dialog.getByRole('button', { name: 'Browse files' }).click();
+  await (await chooser).setFiles(localClip);
+  await expect(page.locator('#media-title')).toHaveText('playback.mp4');
+});
+
+test('reports a local playback stall without calling it a network stream', async ({ page }) => {
+  await page.locator('#file-input').setInputFiles(localClip);
+  await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
+  await page.locator('#video').evaluate((video) => {
+    Object.defineProperty(video, 'readyState', { value: 2, configurable: true });
+    video.dispatchEvent(new Event('waiting'));
+  });
+  await expect(page.locator('#stage-message')).toHaveText('Waiting for Chrome to read or decode the file…');
+  await page.keyboard.press('k');
+  await expect(page.locator('#stage-message')).toBeHidden();
 });

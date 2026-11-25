@@ -2,7 +2,12 @@ const errorMessage = 'Couldn’t open the stream. Check the URL, browser access 
 
 export function makeHlsPlayer(Hls, video, { onError, onTracks }) {
   if (!Hls.isSupported()) throw new Error('HLS playback is not available in this browser.');
-  const hls = new Hls();
+  const hls = new Hls({
+    maxBufferLength: 45,
+    maxMaxBufferLength: 90,
+    maxBufferSize: 96 * 1024 * 1024,
+    backBufferLength: 15,
+  });
   const { Events } = Hls;
   let pending;
   let destroyed = false;
@@ -79,6 +84,7 @@ export function makeDashPlayer(shaka, video, { onError, onTracks }) {
   shaka.polyfill.installAll();
   if (!shaka.Player.isBrowserSupported()) throw new Error('DASH playback is not available in this browser.');
   const player = new shaka.Player();
+  player.configure({ streaming: { bufferingGoal: 45, rebufferingGoal: 2, bufferBehind: 15 } });
   let ready = false;
   player.addEventListener('error', (event) => {
     if (ready && event.detail.severity === shaka.util.Error.Severity.CRITICAL) {

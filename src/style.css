@@ -293,6 +293,7 @@ input[type="range"]::-moz-range-thumb { width: var(--thumb); height: var(--thumb
 .dialog-note { margin: 2px 0; color: #bbaea3; font-size: 13px; line-height: 1.55; }
 .form-error { margin: 0; color: #ffab92; font-size: 13px; }
 .dialog-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+.desktop-file-actions { gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 .primary-button { min-height: 38px; padding-inline: 12px; background: var(--accent); border-color: transparent; color: #24160e; }
 .primary-button:hover { background: #ffc39b; }
 .shortcut-list { margin: 0; font-size: 13px; }
