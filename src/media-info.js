@@ -63,7 +63,7 @@ function artwork(track) {
   }
 }
 
-export async function inspectMedia(source, abortSignal, { includeCover = false } = {}) {
+async function inspectWithMediaInfo(source, abortSignal, includeCover) {
   const remote = !source.file;
   const signal = remote ? AbortSignal.any([abortSignal, AbortSignal.timeout(8000)]) : abortSignal;
   const size = remote ? (await readRange(source.url, 0, 0, signal)).size : source.file.size;
@@ -102,4 +102,35 @@ export async function inspectMedia(source, abortSignal, { includeCover = false }
   } finally {
     reader.close();
   }
+}
+
+export async function inspectMedia(source, signal, { includeCover = false } = {}) {
+  if (!source.file || includeCover) return inspectWithMediaInfo(source, signal, includeCover);
+  const inspectNative = () => inspectWithMediaInfo(source, signal, false);
+  const inspectDemuxer = async () => {
+    const { inspectContainer } = await import('./container-info.js');
+    signal.throwIfAborted();
+    return inspectContainer(source.file, signal);
+  };
+  const webm = /\.(webm|mkv)$/i.test(source.file.name) || /webm|matroska/i.test(source.file.type);
+  const probes = webm ? [inspectDemuxer, inspectNative] : [inspectNative, inspectDemuxer];
+  let details = {};
+  let lastFailure;
+  for (const probe of probes) {
+    try {
+      const result = await probe();
+      for (const key of ['format', 'videoCodec', 'audioCodec', 'width', 'height']) {
+        if (!details[key] && result[key]) details[key] = result[key];
+      }
+      if (!details.frameRate && Number.isFinite(result.frameRate) && result.frameRate > 0) {
+        details = { ...details, frameRate: result.frameRate, estimatedRate: result.estimatedRate, variableRate: result.variableRate };
+      }
+      if (details.format && details.videoCodec && details.frameRate && details.audioCodec) break;
+    } catch (error) {
+      signal.throwIfAborted();
+      lastFailure = error;
+    }
+  }
+  if (!Object.keys(details).length && lastFailure) throw lastFailure;
+  return details;
 }

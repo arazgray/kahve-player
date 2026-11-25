@@ -1,13 +1,13 @@
 import {
   ArrowDownToLine, Captions, Check, ChevronDown, ChevronRight,
-  Expand, Film, FolderOpen, Headphones, Image, Info, Keyboard, Link2, ListVideo, Music2, Plus, Tv,
+  Expand, FileVideoCamera, Film, FolderOpen, Headphones, Image, Info, Keyboard, Link2, ListVideo, Music2, Plus, Tv,
   Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Settings2,
   SkipBack, SkipForward, Volume2, VolumeX, X,
 } from 'lucide';
 
 const icons = {
   ArrowDownToLine, Captions, Check, ChevronDown, ChevronRight,
-  Expand, Film, FolderOpen, Headphones, Image, Info, Keyboard, Link2, ListVideo, Music2, Plus, Tv,
+  Expand, FileVideoCamera, Film, FolderOpen, Headphones, Image, Info, Keyboard, Link2, ListVideo, Music2, Plus, Tv,
   Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Settings2,
   SkipBack, SkipForward, Volume2, VolumeX, X,
 };

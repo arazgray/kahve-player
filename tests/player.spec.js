@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
-import { extname } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { extname, join, relative } from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
 
 const localClip = fileURLToPath(new URL('./fixtures/playback.mp4', import.meta.url));
 const coveredTrack = fileURLToPath(new URL('./fixtures/cover.mp3', import.meta.url));
 const unillustratedTrack = fileURLToPath(new URL('./fixtures/tags.mp3', import.meta.url));
+const webmRecording = fileURLToPath(new URL('./fixtures/recording.webm', import.meta.url));
 const duration = (page) => page.locator('#video').evaluate((video) => video.duration);
 const playhead = (page) => page.locator('#video').evaluate((video) => video.currentTime);
 const mediaTypes = {
@@ -142,11 +143,29 @@ test('plays DASH and switches back to native direct playback', async ({ page }) 
   await expect(page.locator('#video-info-format')).toHaveText('MP4 (MPEG-4)');
 });
 
-test('loads its installed app shell offline and plays local files', async ({ page, context }) => {
+test('serves every built app asset offline and plays local files', async ({ page, context }) => {
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'No media open' })).toBeVisible();
+  const dist = fileURLToPath(new URL('../dist/', import.meta.url));
+  const assets = (await readdir(dist, { recursive: true, withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(dist, join(entry.parentPath, entry.name)).replaceAll('\\', '/'))
+    .filter((path) => path !== 'sw.js');
+  expect(assets).toContain('manifest.webmanifest');
+  const unavailable = await page.evaluate(async (paths) => {
+    const checks = await Promise.all(paths.map(async (path) => {
+      try {
+        const response = await fetch(new URL(path, location.href), { cache: 'no-store' });
+        return response.ok ? null : `${path}: ${response.status}`;
+      } catch {
+        return path;
+      }
+    }));
+    return checks.filter(Boolean);
+  }, assets);
+  expect(unavailable).toEqual([]);
   await page.locator('#file-input').setInputFiles(localClip);
   await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
   await page.getByRole('button', { name: 'Video info', exact: true }).click();
@@ -197,14 +216,12 @@ test('opts into native window controls and follows changes in title-bar geometry
   });
   await page.reload();
   const open = page.getByRole('button', { name: 'Open', exact: true });
-  const hdr = page.getByRole('button', { name: 'HDR settings' });
+  const about = page.getByRole('button', { name: 'About Kahve' });
   await page.evaluate(() => window.dispatchEvent(new Event('beforeinstallprompt', { cancelable: true })));
   await expect(page.getByRole('button', { name: 'Install app' })).toBeHidden();
   expect((await open.boundingBox()).x).toBeGreaterThan(105);
-  const hdrBounds = await hdr.boundingBox();
-  expect(hdrBounds.x + hdrBounds.width).toBeLessThan(400);
-  const playlistBounds = await page.getByRole('button', { name: 'Playlist', exact: true }).boundingBox();
-  expect(playlistBounds.x + playlistBounds.width).toBeLessThan(400);
+  const aboutBounds = await about.boundingBox();
+  expect(aboutBounds.x + aboutBounds.width).toBeLessThan(400);
   await open.click();
   await expect(page.getByRole('button', { name: /Open files/ })).toBeVisible();
   await page.evaluate(() => {
@@ -342,4 +359,95 @@ test('saves and loads ordered local files and the current item across an offline
   await playlist.getByRole('button', { name: 'Remove saved playlist', exact: true }).click();
   await expect(playlist).toContainText('No saved playlists in this browser yet.');
   await expect(page.getByRole('img', { name: 'Second.svg' })).toBeVisible();
+});
+
+test('reads format, codecs and frame rate from a live-style WebM recording offline', async ({ page, context }) => {
+  await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+  await context.setOffline(true);
+  await page.reload();
+  await page.locator('#file-input').setInputFiles(webmRecording);
+  await page.getByRole('button', { name: 'Video info', exact: true }).click();
+  await expect(page.locator('#video-info-format')).toHaveText('WebM');
+  await expect(page.locator('#video-info-videoCodec')).toHaveText('VP9');
+  await expect(page.locator('#video-info-audioCodec')).toHaveText(/^Opus/);
+  await expect(page.locator('#video-info-frameRate')).toHaveText(/29\.97\d* fps/);
+  await expect(page.locator('#video-info-resolution')).toHaveText('160 × 90');
+});
+
+test('asks for the folder for a standalone image and queues its adjacent images in filename order', async ({ page }) => {
+  const images = [testImage('Photo 10', 'green'), testImage('Photo 2', 'blue'), testImage('Photo 1', 'red')];
+  await page.evaluate((entries) => {
+    Object.defineProperty(window, 'showDirectoryPicker', {
+      configurable: true,
+      value: async () => ({
+        async *values() {
+          for (const { base64, name, mimeType } of entries) {
+            const file = new File([Uint8Array.from(atob(base64), (letter) => letter.charCodeAt(0))], name, { type: mimeType });
+            yield { kind: 'file', name, getFile: async () => file };
+          }
+          yield { kind: 'directory', name: 'Nested folder' };
+        },
+      }),
+    });
+  }, images.map(({ name, mimeType, buffer }) => ({ name, mimeType, base64: buffer.toString('base64') })));
+  await page.locator('#file-input').setInputFiles(images[1]);
+  await expect(page.getByRole('img', { name: 'Photo 2.svg' })).toBeVisible();
+  const next = page.getByRole('button', { name: 'Next item' });
+  const previous = page.getByRole('button', { name: 'Previous item' });
+  await expect(previous).toBeEnabled();
+  await next.click();
+  await expect(page.getByRole('img', { name: 'Photo 10.svg' })).toBeVisible();
+  await expect(next).toBeDisabled();
+  await previous.click();
+  await expect(page.getByRole('img', { name: 'Photo 2.svg' })).toBeVisible();
+  await previous.click();
+  await expect(page.getByRole('img', { name: 'Photo 1.svg' })).toBeVisible();
+  await expect(previous).toBeDisabled();
+});
+
+test('keeps About and shortcuts at the top, preserves the media title, and toggles fullscreen with Enter', async ({ page }) => {
+  const order = await page.locator('.controls .control-group').first().locator('button').evaluateAll((buttons) => buttons.slice(0, 3).map((button) => button.id));
+  expect(order).toEqual(['play', 'previous-item', 'next-item']);
+  const tools = page.locator('.controls');
+  await expect(tools.getByRole('button', { name: 'Playlist', exact: true })).toBeVisible();
+  await expect(tools.getByRole('button', { name: 'HDR settings' })).toBeVisible();
+  await expect(tools.getByRole('button', { name: 'Video info' })).toBeVisible();
+  await page.locator('.stage-top').getByRole('button', { name: 'About Kahve' }).click();
+  const about = page.getByRole('dialog', { name: 'Kahve Player' });
+  await expect(about.getByRole('link', { name: 'GitHub' })).toHaveAttribute('href', 'https://github.com/arazgray/kahve-player');
+  await expect(about.getByRole('link', { name: 'Made by Araz Gray' })).toHaveAttribute('target', '_blank');
+  await page.keyboard.press('Escape');
+  await page.locator('#file-input').setInputFiles(localClip);
+  await expect(page.locator('#media-title')).toHaveText('playback.mp4');
+  await expect(page).toHaveTitle('Kahve Player');
+  expect(await page.evaluate(() => navigator.mediaSession.metadata.title)).toBe('playback.mp4');
+  await page.evaluate(() => document.activeElement.blur());
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe('stage');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
+});
+
+test('adds files to the queue from Open without replacing the active file', async ({ page }) => {
+  await page.locator('#file-input').setInputFiles(localClip);
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Add files to queue', exact: true }).click();
+  await (await chooser).setFiles(testImage('Queued', 'orange'));
+  await expect(page.locator('#media-title')).toHaveText('playback.mp4');
+  await page.getByRole('button', { name: 'Next item' }).click();
+  await expect(page.getByRole('img', { name: 'Queued.svg' })).toBeVisible();
+});
+
+test('plays dropped media immediately instead of appending during playback', async ({ page }) => {
+  const buffer = await readFile(localClip);
+  await page.locator('#file-input').setInputFiles([
+    { name: 'Playing.mp4', mimeType: 'video/mp4', buffer }, testImage('Old queue', 'red'),
+  ]);
+  await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
+  await dropFiles(page, [{ name: 'Dropped.mp4', mimeType: 'video/mp4', buffer }]);
+  await expect(page.locator('#media-title')).toHaveText('Dropped.mp4');
+  await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
+  await page.getByRole('button', { name: 'Playlist', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Playlist' }).locator('.playlist-entry')).toHaveText(['Dropped.mp4']);
 });

@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
+      includeManifestIcons: false,
       manifest: {
         name: 'Kahve Player',
         short_name: 'Kahve',
@@ -22,8 +23,10 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,woff2,wasm}'],
-        globIgnores: ['**/hls-*.js', '**/shaka-player.dash-*.js'],
+        inlineWorkboxRuntime: true,
+        globPatterns: ['**/*'],
+        // VitePWA adds the manifest separately; Chrome stores the worker itself.
+        globIgnores: ['manifest.webmanifest', 'sw.js'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
       },
     }),

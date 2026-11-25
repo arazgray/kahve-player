@@ -4,7 +4,7 @@ import { icon, iconButton } from './icons.js';
 import { asWebVtt } from './subtitles.js';
 import { makeDashPlayer, makeHlsPlayer } from './adaptive.js';
 import { createImageViewer } from './image-viewer.js';
-import { collectFiles, imageFormat } from './playlist.js';
+import { collectFiles, collectFolderImages, imageFormat, isImageFile } from './playlist.js';
 import { deleteSavedPlaylist, listSavedPlaylists, loadSavedPlaylist, savePlaylist } from './playlist-library.js';
 import logoUrl from '../Kahve.png?url';
 import './style.css';
@@ -29,9 +29,7 @@ document.querySelector('#app').innerHTML = `
             <span id="media-title" class="media-title" hidden></span>
           </div>
           <div class="top-actions">
-            <button type="button" class="toolbar-button" id="hdr" aria-label="HDR settings" aria-expanded="false" aria-controls="player-menu">HDR</button>
-            ${iconButton('playlist', 'Playlist', 'ListVideo', 'aria-expanded="false" aria-controls="player-menu"')}
-            ${iconButton('video-info', 'Video info', 'Info', 'aria-haspopup="dialog" aria-controls="video-info-dialog"')}
+            ${iconButton('about', 'About Kahve', 'Info', 'aria-haspopup="dialog" aria-controls="about-dialog"')}
             ${iconButton('shortcuts', 'Keyboard shortcuts', 'Keyboard')}
             <button type="button" class="toolbar-button" id="install" aria-label="Install app" title="Install app" hidden>${icon('ArrowDownToLine')}<span>Install</span></button>
           </div>
@@ -68,8 +66,8 @@ document.querySelector('#app').innerHTML = `
           </div>
           <div class="control-row">
             <div class="control-group">
-              ${iconButton('previous-item', 'Previous item', 'SkipBack')}
               ${iconButton('play', 'Play', 'Play', 'data-video-control')}
+              ${iconButton('previous-item', 'Previous item', 'SkipBack')}
               ${iconButton('next-item', 'Next item', 'SkipForward')}
               ${iconButton('back', 'Back 10 seconds', 'RotateCcw', 'data-skip data-video-control')}
               ${iconButton('forward', 'Forward 10 seconds', 'RotateCw', 'data-skip data-video-control')}
@@ -85,6 +83,9 @@ document.querySelector('#app').innerHTML = `
               ${iconButton('captions', 'Subtitles', 'Captions', 'data-video-control aria-expanded="false" aria-controls="player-menu"')}
               ${iconButton('settings', 'Playback settings', 'Settings2', 'data-video-control aria-expanded="false" aria-controls="player-menu"')}
               ${iconButton('pip', 'Picture in picture', 'PictureInPicture2', 'data-video-control')}
+              <button type="button" class="toolbar-button" id="hdr" aria-label="HDR settings" aria-expanded="false" aria-controls="player-menu">HDR</button>
+              ${iconButton('playlist', 'Playlist', 'ListVideo', 'aria-expanded="false" aria-controls="player-menu"')}
+              ${iconButton('video-info', 'Video info', 'FileVideoCamera', 'aria-haspopup="dialog" aria-controls="video-info-dialog"')}
               ${iconButton('fullscreen', 'Enter fullscreen', 'Expand')}
             </div>
           </div>
@@ -97,8 +98,20 @@ document.querySelector('#app').innerHTML = `
           </dl>
           <p class="dialog-note video-info-note" id="video-info-note" role="status" hidden></p>
         </dialog>
+        <dialog id="about-dialog" class="dialog" aria-labelledby="about-title">
+          <div class="dialog-header">
+            <div class="about-heading"><img src="${logoUrl}" alt=""><h2 id="about-title">Kahve Player</h2></div>
+            ${iconButton('close-about', 'Close About Kahve', 'X', 'data-close')}
+          </div>
+          <p class="dialog-note">A fast Chrome-based player for video, photos, and music, built to make HDR playback on Linux easier.</p>
+          <div class="about-links">
+            <a href="https://github.com/arazgray/kahve-player" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href="https://arazgray.com" target="_blank" rel="noopener noreferrer">Made by Araz Gray</a>
+          </div>
+        </dialog>
   </main>
   <input id="file-input" type="file" accept="video/*,audio/*,image/*,.mkv,.mov,.mp4,.m4v,.webm,.ogv,.avi,.ts" multiple hidden>
+  <input id="folder-input" type="file" webkitdirectory multiple hidden>
   <input id="subtitle-input" type="file" accept=".srt,.vtt,text/vtt" hidden>
   <div class="toast" id="toast" role="status" hidden></div>
 
@@ -126,7 +139,7 @@ document.querySelector('#app').innerHTML = `
       <div><dt>Change volume</dt><dd><kbd>↑</kbd> <kbd>↓</kbd></dd></div>
       <div><dt>Mute / unmute</dt><dd><kbd>M</kbd></dd></div>
       <div><dt>Toggle subtitles</dt><dd><kbd>C</kbd></dd></div>
-      <div><dt>Toggle fullscreen</dt><dd><kbd>F</kbd></dd></div>
+      <div><dt>Toggle fullscreen</dt><dd><kbd>Enter</kbd> <kbd>F</kbd></dd></div>
       <div><dt>Open files</dt><dd><kbd>O</kbd></dd></div>
       <div><dt>Show shortcuts</dt><dd><kbd>?</kbd></dd></div>
     </dl>
@@ -150,6 +163,7 @@ let imageSize = null;
 let playlist = [];
 let playlistIndex = -1;
 let appendPickedFiles = false;
+let folderRequest = null;
 let libraryView = null;
 let source = null;
 let musicMode = false;
@@ -202,8 +216,9 @@ function timeLabel(time) {
 function codecLabel(value) {
   if (!value) return '';
   const codecFamily = {
-    avc1: 'H.264 / AVC', avc3: 'H.264 / AVC', hvc1: 'H.265 / HEVC', hev1: 'H.265 / HEVC',
-    vp09: 'VP9', vp08: 'VP8', av01: 'AV1', opus: 'Opus', 'ac-3': 'Dolby Digital', 'ec-3': 'Dolby Digital Plus',
+    avc: 'H.264 / AVC', avc1: 'H.264 / AVC', avc3: 'H.264 / AVC', hevc: 'H.265 / HEVC', hvc1: 'H.265 / HEVC', hev1: 'H.265 / HEVC',
+    vp9: 'VP9', vp09: 'VP9', vp8: 'VP8', vp08: 'VP8', av1: 'AV1', av01: 'AV1', opus: 'Opus', aac: 'AAC',
+    'ac-3': 'Dolby Digital', 'ec-3': 'Dolby Digital Plus',
   };
   const id = value.toLowerCase();
   const label = id.startsWith('mp4a.40.') ? 'AAC' : codecFamily[id.split('.')[0]];
@@ -235,7 +250,7 @@ function renderVideoInfo() {
     format: image ? imageFormat(source.file) : metadata.format || streamFormat,
     videoCodec: codecLabel(metadata.videoCodec),
     audioCodec: codecLabel(metadata.audioCodec),
-    frameRate: Number.isFinite(fps) && fps > 0 ? `${new Intl.NumberFormat('en', { maximumFractionDigits: 3 }).format(fps)} fps${metadata.variableRate ? ' (variable)' : ''}` : '',
+    frameRate: Number.isFinite(fps) && fps > 0 ? `${new Intl.NumberFormat('en', { maximumFractionDigits: 3 }).format(fps)} fps${metadata.variableRate ? ' (variable)' : metadata.estimatedRate ? ' (estimated)' : ''}` : '',
     resolution: width > 0 && height > 0 ? `${width} × ${height}` : '',
     duration: streamPlayer?.isLive() ? 'Live' : Number.isFinite(video.duration) ? timeLabel(video.duration) : '',
   };
@@ -389,6 +404,7 @@ function showMusicTags(tags = {}) {
   $('music-track').textContent = tags.track || source?.title.replace(/\.[^.]+$/, '') || 'Unknown track';
   $('music-artist').textContent = tags.artist || 'Unknown artist';
   $('music-album').textContent = tags.album || 'Unknown album';
+  updateMediaSession(tags);
   if (!tags.cover) return;
   clearMusicCover();
   const cover = $('music-cover');
@@ -402,6 +418,13 @@ function showMusicTags(tags = {}) {
   }).catch(() => {
     if (url === musicArtworkUrl) clearMusicCover();
   });
+}
+
+function updateMediaSession(tags = {}) {
+  if (!navigator.mediaSession || typeof MediaMetadata === 'undefined') return;
+  navigator.mediaSession.metadata = source && source.kind !== 'image'
+    ? new MediaMetadata({ title: tags.track || source.title, artist: tags.artist || '', album: tags.album || '' })
+    : null;
 }
 
 function resetMusic() {
@@ -442,7 +465,7 @@ function syncMediaPresentation() {
   $('music-viewer').hidden = !musicMode;
   $('hdr').hidden = image || musicMode;
   $('video-info-title').textContent = image ? 'Image info' : musicMode ? 'Audio info' : 'Video info';
-  setIcon('video-info', 'Info', $('video-info-title').textContent);
+  setIcon('video-info', 'FileVideoCamera', $('video-info-title').textContent);
   const label = { image: 'IMAGE', local: musicMode ? 'AUDIO FILE' : 'LOCAL FILE', direct: 'VIDEO LINK', hls: 'HLS STREAM', dash: 'DASH STREAM' };
   $('source-tag').textContent = label[source?.kind] ?? 'NO MEDIA';
 }
@@ -470,7 +493,7 @@ function updateSourceInfo() {
   title.title = title.textContent;
   title.hidden = !source;
   $('empty-state').hidden = Boolean(source);
-  document.title = source ? `Kahve Player — ${source.title}` : 'Kahve Player';
+  updateMediaSession();
   stage.classList.toggle('viewing-image', image);
   imageViewport.hidden = !image;
   if (source?.audioHint) {
@@ -926,8 +949,8 @@ function renderPlaylist() {
   actions.className = 'playlist-actions';
   const add = playlistAction('Add files…', () => pickFiles(true));
   add.insertAdjacentHTML('afterbegin', icon('Plus'));
-  const save = playlistAction('Save…', showSavePlaylist, { class: 'toolbar-button playlist-save', 'aria-label': 'Save playlist' });
-  const load = playlistAction('Load…', showSavedPlaylists, { class: 'toolbar-button playlist-load', 'aria-label': 'Load playlist' });
+  const save = playlistAction('Save', showSavePlaylist, { class: 'toolbar-button playlist-save', 'aria-label': 'Save playlist' });
+  const load = playlistAction('Load', showSavedPlaylists, { class: 'toolbar-button playlist-load', 'aria-label': 'Load playlist' });
   const clear = playlistAction('Clear', () => setPlaylist([]), { class: 'toolbar-button playlist-clear', 'aria-label': 'Clear playlist' });
   save.disabled = clear.disabled = !playlist.length;
   actions.append(add, save, load, clear);
@@ -944,6 +967,10 @@ function renderMenu(restoreFocus = false) {
       closeMenu(true);
       pickFiles();
     }, null, 'O');
+    menuItem('Add files to queue', () => {
+      closeMenu(true);
+      pickFiles(true);
+    });
     menuItem('Open a stream…', () => {
       closeMenu(true);
       streamDialog.showModal();
@@ -1034,7 +1061,7 @@ function toggleMenu(id, event) {
   closeMenu();
   openMenu = id;
   $(id).setAttribute('aria-expanded', 'true');
-  menu.dataset.position = id === 'open-source' ? 'top-left' : id === 'hdr' ? 'top-right' : id === 'playlist' ? 'playlist' : 'bottom';
+  menu.dataset.position = id === 'open-source' ? 'top-left' : id === 'playlist' ? 'playlist' : 'bottom';
   menu.setAttribute('aria-label', id === 'playlist' ? 'Playlist' : 'Playback options');
   menu.hidden = false;
   renderMenu();
@@ -1055,11 +1082,16 @@ function toggleCaptions() {
 }
 
 function updatePlaylistUI() {
-  $('previous-item').disabled = playlistIndex <= 0;
-  $('next-item').disabled = playlistIndex < 0 || playlistIndex >= playlist.length - 1;
+  const browseFolder = isStandaloneImage();
+  const waitForFolder = browseFolder && folderRequest?.entry === source;
+  $('previous-item').disabled = browseFolder ? Boolean(waitForFolder) : playlistIndex <= 0;
+  $('next-item').disabled = browseFolder ? Boolean(waitForFolder) : playlistIndex < 0 || playlistIndex >= playlist.length - 1;
+  $('previous-item').title = browseFolder ? 'Choose a folder to find the previous image' : 'Previous item';
+  $('next-item').title = browseFolder ? 'Choose a folder to find the next image' : 'Next item';
   $('playlist').classList.toggle('selected', playlist.length > 1);
   $('image-position').hidden = source?.kind !== 'image';
-  $('image-position').textContent = source?.kind === 'image' ? `Image ${playlistIndex + 1} of ${playlist.length}` : '';
+  $('image-position').textContent = browseFolder ? 'Use Previous or Next to browse the folder'
+    : source?.kind === 'image' ? `Image ${playlistIndex + 1} of ${playlist.length}` : '';
   if (openMenu === 'playlist' && !libraryView) renderMenu(true);
 }
 
@@ -1071,7 +1103,76 @@ function playPlaylistItem(index) {
 }
 
 function movePlaylist(delta) {
-  playPlaylistItem(playlistIndex + delta);
+  const index = playlistIndex + delta;
+  if (playlist[index]) playPlaylistItem(index);
+  else if (isStandaloneImage()) void browseImageFolder(delta);
+}
+
+function isStandaloneImage() {
+  return playlist.length === 1 && source?.kind === 'image' && !!source.file;
+}
+
+function finishFolderRequest(request, files) {
+  if (!request || folderRequest !== request) return;
+  folderRequest = null;
+  if (source !== request.entry || !isStandaloneImage() || !files) {
+    updatePlaylistUI();
+    return;
+  }
+  const entries = collectFolderImages(files);
+  const activeIndex = entries.findIndex(({ file }) => file.name === request.entry.file.name && file.size === request.entry.file.size);
+  if (activeIndex < 0) {
+    updatePlaylistUI();
+    notify('Choose the folder that contains the open image.');
+    return;
+  }
+  if (entries.length < 2) {
+    updatePlaylistUI();
+    notify('There aren’t any other images in this folder.');
+    return;
+  }
+  entries[activeIndex] = request.entry;
+  playlist = entries;
+  playlistIndex = activeIndex;
+  const adjacent = activeIndex + request.delta;
+  if (entries[adjacent]) playPlaylistItem(adjacent);
+  else {
+    updatePlaylistUI();
+    notify(`You’re at the ${request.delta < 0 ? 'first' : 'last'} image in this folder.`);
+  }
+}
+
+async function browseImageFolder(delta) {
+  if (folderRequest || !isStandaloneImage()) return;
+  const request = { entry: source, delta };
+  folderRequest = request;
+  // Keep the chooser invocation inside the click or keyboard gesture.
+  if (!window.showDirectoryPicker) {
+    $('folder-input').click();
+    updatePlaylistUI();
+    return;
+  }
+  try {
+    const selection = window.showDirectoryPicker({ mode: 'read', id: 'kahve-image-folder', startIn: 'pictures' });
+    updatePlaylistUI();
+    const handle = await selection;
+    const files = [];
+    for await (const item of handle.values()) {
+      if (source !== request.entry || !isStandaloneImage()) break;
+      if (item.kind === 'file' && isImageFile(item)) {
+        try { files.push(await item.getFile()); }
+        catch { /* A file may have been removed while the folder was open. */ }
+      }
+    }
+    finishFolderRequest(request, files);
+  } catch (error) {
+    if (error.name === 'SecurityError' && navigator.userActivation?.isActive) {
+      $('folder-input').click();
+      return;
+    }
+    finishFolderRequest(request);
+    if (error.name !== 'AbortError' && source === request.entry) notify('Chrome couldn’t read that image folder.');
+  }
 }
 
 function setPlaylist(entries, append = false, activeIndex = 0) {
@@ -1209,6 +1310,11 @@ $('file-input').addEventListener('change', (event) => {
   void openFiles(event.target.files, appendPickedFiles);
   event.target.value = '';
 });
+$('folder-input').addEventListener('change', (event) => {
+  finishFolderRequest(folderRequest, event.target.files);
+  event.target.value = '';
+});
+$('folder-input').addEventListener('cancel', () => finishFolderRequest(folderRequest));
 $('initial-files').addEventListener('click', () => pickFiles());
 $('initial-streams').addEventListener('click', () => streamDialog.showModal());
 $('subtitle-input').addEventListener('change', (event) => {
@@ -1217,8 +1323,15 @@ $('subtitle-input').addEventListener('change', (event) => {
 });
 
 const dropLayer = stage.querySelector('.drop-layer');
+function shouldAppendDrop() {
+  return !source || source.kind === 'image' || video.paused || video.ended;
+}
+
 function showDrop(visible) {
-  if (visible) $('drop-title').textContent = playlist.length ? 'Drop to add to playlist' : 'Drop to open';
+  if (visible) {
+    $('drop-title').textContent = !shouldAppendDrop() ? 'Drop to play now'
+      : playlist.length ? 'Drop to add to playlist' : 'Drop to open';
+  }
   dropLayer.hidden = !visible;
   if (visible) wakeControls();
 }
@@ -1242,7 +1355,7 @@ window.addEventListener('drop', (event) => {
   event.preventDefault();
   dragDepth = 0;
   showDrop(false);
-  void openFiles(event.dataTransfer.files, true);
+  void openFiles(event.dataTransfer.files, shouldAppendDrop());
 });
 
 $('stream-url').addEventListener('input', () => { $('stream-error').hidden = true; });
@@ -1266,6 +1379,10 @@ $('stream-form').addEventListener('submit', (event) => {
 });
 
 $('shortcuts').addEventListener('click', () => $('shortcut-dialog').showModal());
+$('about').addEventListener('click', () => {
+  closeMenu();
+  $('about-dialog').showModal();
+});
 $('video-info').addEventListener('click', () => {
   closeMenu();
   infoDialog.showModal();
@@ -1327,13 +1444,13 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || document.querySelector('dialog[open]')
     || event.target.closest('input, select, textarea, [contenteditable]')) return;
-  if (event.key === ' ' && event.target.closest('button, a')) return;
+  if ((event.key === ' ' || event.key === 'Enter') && event.target.closest('button, a')) return;
   const navigate = (delta) => source?.kind === 'image' ? movePlaylist(delta) : skip(delta * 10);
   const actions = {
     ' ': togglePlay, k: togglePlay, ArrowLeft: () => navigate(-1), ArrowRight: () => navigate(1),
     '[': () => movePlaylist(-1), ']': () => movePlaylist(1),
     ArrowUp: () => changeVolume(0.1), ArrowDown: () => changeVolume(-0.1),
-    m: toggleMute, c: toggleCaptions, f: fullscreen, o: () => pickFiles(), '?': () => $('shortcuts').click(),
+    m: toggleMute, c: toggleCaptions, f: fullscreen, Enter: fullscreen, o: () => pickFiles(), '?': () => $('shortcuts').click(),
   };
   const action = actions[event.key] ?? actions[event.key.toLowerCase()];
   if (!action) return;
@@ -1349,3 +1466,5 @@ function changeVolume(delta) {
 
 updatePlaylistUI();
 updateControls();
+const controls = stage.querySelector('.controls');
+new ResizeObserver(() => stage.style.setProperty('--controls-height', `${controls.offsetHeight}px`)).observe(controls);

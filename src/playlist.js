@@ -4,13 +4,24 @@ const audioExtensions = /\.(aac|aiff?|alac|ape|flac|m4a|mka|mp[23]|oga|opus|wav|
 const subtitleExtensions = /\.(srt|vtt)$/i;
 const stem = (name) => name.replace(/\.[^.]+$/, '').toLowerCase();
 
+export function isImageFile(file) {
+  return file.type?.startsWith('image/') || imageExtensions.test(file.name);
+}
+
+export function collectFolderImages(files) {
+  const order = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  return [...files].filter((file) => isImageFile(file) && (!file.webkitRelativePath || file.webkitRelativePath.split('/').length === 2))
+    .sort((a, b) => order.compare(a.name, b.name))
+    .map((file) => ({ kind: 'image', file, title: file.name }));
+}
+
 export function collectFiles(files) {
   const entries = [];
   const subtitles = [];
   let skipped = 0;
   for (const file of files) {
     if (subtitleExtensions.test(file.name)) subtitles.push(file);
-    else if (file.type.startsWith('image/') || imageExtensions.test(file.name)) {
+    else if (isImageFile(file)) {
       entries.push({ kind: 'image', title: file.name, file });
     } else if (/^(video|audio)\//.test(file.type) || mediaExtensions.test(file.name) || audioExtensions.test(file.name)) {
       const audioHint = file.type.startsWith('audio/') || audioExtensions.test(file.name);
