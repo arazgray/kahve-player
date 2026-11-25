@@ -1468,3 +1468,17 @@ updatePlaylistUI();
 updateControls();
 const controls = stage.querySelector('.controls');
 new ResizeObserver(() => stage.style.setProperty('--controls-height', `${controls.offsetHeight}px`)).observe(controls);
+
+// Chrome delivers desktop “Open With” files here, including on a cold launch.
+let desktopLaunch = 0;
+window.launchQueue?.setConsumer(async ({ files: handles }) => {
+  if (!handles?.length) return;
+  const request = ++desktopLaunch;
+  const beforeReading = sourceRequest;
+  const results = await Promise.allSettled(handles.map(async (handle) => handle.getFile()));
+  if (request !== desktopLaunch || sourceRequest !== beforeReading) return;
+  const files = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+  if (!files.length) return notify('Kahve couldn’t read the files opened from your desktop.');
+  await openFiles(files);
+  if (files.length < handles.length) notify('Some of the files opened from your desktop couldn’t be read.');
+});

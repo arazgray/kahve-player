@@ -239,7 +239,7 @@ test('uses consistent app artwork and only offers installation on a browser prom
   expect(await page.locator('.empty-icon').evaluate((image) => image.src)).toBe(appArtwork);
   const manifest = await page.request.get('/manifest.webmanifest');
   expect((await manifest.json()).icons.map((icon) => icon.src)).toEqual([
-    'kahve-logo-192.png', 'kahve-logo-512.png', 'kahve-logo-maskable.png',
+    'kahve-app-192.png', 'kahve-app-512.png', 'kahve-app-maskable.png',
   ]);
   const install = page.getByRole('button', { name: 'Install app' });
   await expect(install).toBeHidden();
@@ -450,4 +450,35 @@ test('plays dropped media immediately instead of appending during playback', asy
   await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
   await page.getByRole('button', { name: 'Playlist', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Playlist' }).locator('.playlist-entry')).toHaveText(['Dropped.mp4']);
+});
+
+test('receives files from the installed app launch queue, even offline', async ({ page, context }) => {
+  const manifest = await (await page.request.get('/manifest.webmanifest')).json();
+  expect(manifest.launch_handler.client_mode).toBe('focus-existing');
+  expect(manifest.file_handlers[0]).toMatchObject({
+    action: './', launch_type: 'single-client',
+    accept: { 'video/mp4': ['.mp4', '.m4v'], 'audio/mpeg': ['.mp3'], 'image/png': ['.png'] },
+  });
+  await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'launchQueue', {
+      value: { setConsumer: (consumer) => { window.receiveDesktopLaunch = consumer; } },
+    });
+  });
+  await context.setOffline(true);
+  await page.reload();
+  await page.evaluate(async ({ name, mimeType, base64 }) => {
+    const decode = (bytes) => Uint8Array.from(atob(bytes), (char) => char.charCodeAt(0));
+    await window.receiveDesktopLaunch({
+      files: [
+        { getFile: async () => new File([decode(base64)], name, { type: mimeType }) },
+        { getFile: async () => new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'], 'Desktop.svg', { type: 'image/svg+xml' }) },
+      ],
+    });
+    await window.receiveDesktopLaunch({ files: [] });
+  }, { name: 'Desktop.mp4', mimeType: 'video/mp4', base64: (await readFile(localClip)).toString('base64') });
+  await expect(page.locator('#media-title')).toHaveText('Desktop.mp4');
+  await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
+  await page.getByRole('button', { name: 'Next item' }).click();
+  await expect(page.getByRole('img', { name: 'Desktop.svg' })).toBeVisible();
 });

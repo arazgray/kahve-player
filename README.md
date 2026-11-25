@@ -29,6 +29,8 @@ Press `O` to open files, `Space` to play or pause, `[` / `]` to move through the
 2. Use **Install** when offered, or use Chrome’s install option in the address bar or menu.
 3. In the installed window, click Chrome’s **Hide title bar** chevron if it appears. Kahve’s toolbar and the native window controls then share one row.
 
+On Kubuntu, right-click a supported file in Dolphin and choose **Open With → Kahve Player**. If Chrome asks whether Kahve can open the file, choose **Allow**. If an older installation still opens an empty window or isn’t listed, reinstall Kahve from Chrome to register its file types. Keep site data if you want to retain saved playlists.
+
 Open Kahve once while online so Chrome can cache the app and all its bundled assets. After that, the installed app and browser page can open local media, inspect metadata, and load saved local playlists offline. Remote stream URLs still need a connection.
 
 <details>
