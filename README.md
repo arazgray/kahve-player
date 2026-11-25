@@ -1,2 +1,48 @@
-# kahve-player
-Chrome based Video Player for Linux, Mac and Windows with HDR support on all.
+<p align="center">
+  <img src="public/kahve-coffee-192.png" alt="" width="76" height="76">
+</p>
+<h1 align="center">Kahve Player</h1>
+<p align="center"><strong>A small player for whatever you’re in the mood to watch.</strong></p>
+<p align="center"><a href="https://arazgray.github.io/kahve-player/"><strong>Open Kahve in Chrome →</strong></a></p>
+
+![Kahve playing a video of the Cosmic Cliffs, with two images queued in the playlist](docs/kahve-player.webp)
+
+<sub>Screenshot: Webb’s <a href="https://esawebb.org/images/weic2205a/">Cosmic Cliffs in Carina</a>. Credit: NASA, ESA, CSA, and STScI. The media shown is not bundled with the app.</sub>
+
+## Bring your own media
+
+Kahve opens to an empty player, not a home page. Drop in a video, a folder’s worth of selected photos, or a mix of both. The files stay on your device.
+
+- **Build a queue.** Drop more files to append them without interrupting playback. Use **Playlist** to jump to an item, remove it, or clear the queue. Videos advance when they finish; images wait for you and crossfade when you move between them.
+- **Open a stream.** Paste an HLS, DASH, or direct video URL through the **Open** menu. Adaptive streams can expose audio and subtitle tracks, automatic or manual quality, and a choice of HDR or SDR renditions.
+- **Make it watchable your way.** Add `.srt` or `.vtt` subtitles, adjust playback speed, or use fullscreen or picture-in-picture. The **Info** button shows available codec, frame rate, resolution, and other media details.
+
+Press `O` to open files, `Space` to play or pause, `[` / `]` to move through the queue, and `?` to see all shortcuts.
+
+## Put a cup on your desktop
+
+1. Open [Kahve Player](https://arazgray.github.io/kahve-player/) in desktop Chrome.
+2. Use **Install** when offered, or use Chrome’s install option in the address bar or menu.
+3. In the installed window, click Chrome’s **Hide title bar** chevron if it appears. Kahve’s toolbar and the native window controls then share one row.
+
+Once the app shell has loaded online, installed Kahve can open local files offline. Remote streams still need a connection.
+
+<details>
+<summary>Codec, HDR, and streaming limits</summary>
+
+Kahve uses Chrome’s media engine, so codec and HDR output depend on the browser, OS, graphics hardware, and display. The HDR menu selects an available stream rendition; it does not force HDR for a local file or direct link. Chrome may not expose separate embedded audio tracks in local files. Cross-origin HLS and DASH need a server that allows browser access. Kahve doesn’t transcode media or configure DRM licenses.
+
+</details>
+
+## Run from source
+
+Use Node.js 24 and npm:
+
+```sh
+npm ci
+npm run dev
+```
+
+Open [localhost:5173](http://localhost:5173/). To test installation or offline playback, run `npm run build` followed by `npm run preview` and open [localhost:4173](http://localhost:4173/). Run `npm test` with desktop Chrome installed for the browser test suite.
+
+The player is built with Vite, the browser’s native video element, hls.js, Shaka Player, and MediaInfo. Pushes to `main` build and deploy the static app through [GitHub Actions](.github/workflows/pages.yml).
