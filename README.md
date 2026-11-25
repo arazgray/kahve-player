@@ -5,7 +5,7 @@
 <p align="center">Ridiculysly fast and capable <strong>Video</strong>, <strong>Photo</strong> and <strong>Music</strong> Player based on Chrome</p>
 <p align="center"><a href="https://arazgray.github.io/kahve-player/"><strong>Open Kahve in Chrome →</strong></a></p>
 
-I was tired of HDR challenges in Linux, recently findouts that chrome has support for it, and it plays heavy videos much easier than VLC or other stuff. So I made this for myself.
+I was getting tired of dealing with HDR issues on Linux. Recently, I discovered that Chrome actually supports HDR, and it handles high-bitrate videos much more efficiently than VLC or other media players. So I decided to build this for myself.
 
 ![Kahve playing a video of the Cosmic Cliffs, with two images queued in the playlist](docs/kahve-player.webp)
 
