@@ -5,6 +5,8 @@ import { asWebVtt } from './subtitles.js';
 import { makeDashPlayer, makeHlsPlayer } from './adaptive.js';
 import { createImageViewer } from './image-viewer.js';
 import { collectFiles, imageFormat } from './playlist.js';
+import { deleteSavedPlaylist, listSavedPlaylists, loadSavedPlaylist, savePlaylist } from './playlist-library.js';
+import logoUrl from '../Kahve.png?url';
 import './style.css';
 
 registerSW();
@@ -20,7 +22,7 @@ document.querySelector('#app').innerHTML = `
         <div id="image-viewer" hidden></div>
         <div class="stage-shading" aria-hidden="true"></div>
         <header class="stage-top">
-          <img class="brand-mark" src="./kahve.svg" alt="" title="Kahve Player" draggable="false">
+          <img class="brand-mark" src="${logoUrl}" alt="" title="Kahve Player" draggable="false">
           <button type="button" class="toolbar-button" id="open-source" aria-expanded="false" aria-controls="player-menu">${icon('FolderOpen')}<span>Open</span>${icon('ChevronDown')}</button>
           <div class="source-info">
             <span class="source-tag" id="source-tag">NO MEDIA</span>
@@ -35,13 +37,31 @@ document.querySelector('#app').innerHTML = `
           </div>
         </header>
         <div class="empty-state" id="empty-state">
-          <img class="empty-icon" src="./kahve.svg" alt="" draggable="false">
+          <img class="empty-icon" src="${logoUrl}" alt="" draggable="false">
           <h1>No media open</h1>
-          <p>Drop videos or images here, or choose <strong>Open</strong>.</p>
+          <p>Drop videos, music, or images here to get started.</p>
+          <div class="empty-actions">
+            <button type="button" class="primary-button" id="initial-files">${icon('FolderOpen')}Open Files</button>
+            <button type="button" class="toolbar-button" id="initial-streams">${icon('Link2')}Open Streams</button>
+            <button type="button" class="toolbar-button" disabled>${icon('Tv')}Open IPTV <span class="coming-soon" aria-hidden="true">Soon</span></button>
+          </div>
+        </div>
+        <div class="music-viewer" id="music-viewer" hidden>
+          <div class="music-card" id="music-card">
+            <img id="music-cover" class="music-cover" alt="Album artwork" hidden>
+            <div class="music-copy">
+              <div class="eyebrow">${icon('Music2')} NOW PLAYING</div>
+              <h2 id="music-track"></h2>
+              <dl class="music-tags">
+                <div><dt>Artist</dt><dd id="music-artist"></dd></div>
+                <div><dt>Album</dt><dd id="music-album"></dd></div>
+              </dl>
+            </div>
+          </div>
         </div>
         <button class="hero-play" id="hero-play" type="button" aria-label="Play video" hidden>${icon('Play', true)}</button>
         <div class="stage-message" id="stage-message" role="status" hidden></div>
-        <div class="drop-layer" hidden>${icon('FolderOpen')}<strong id="drop-title">Drop to open</strong><span>Videos, images, or subtitles</span></div>
+        <div class="drop-layer" hidden>${icon('FolderOpen')}<strong id="drop-title">Drop to open</strong><span>Videos, music, images, or subtitles</span></div>
         <div class="controls">
           <div class="seek-row" data-video-control>
             <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
@@ -130,7 +150,12 @@ let imageSize = null;
 let playlist = [];
 let playlistIndex = -1;
 let appendPickedFiles = false;
+let libraryView = null;
 let source = null;
+let musicMode = false;
+let musicProbe;
+let musicAttempted = false;
+let musicArtworkUrl = '';
 let streamPlayer = null;
 let inspection = null;
 let inspected = null;
@@ -216,11 +241,12 @@ function renderVideoInfo() {
   };
   for (const [key] of videoInfoFields) {
     const output = $(`video-info-${key}`);
-    output.parentElement.hidden = image && key !== 'format' && key !== 'resolution';
+    output.parentElement.hidden = (image && !['format', 'resolution'].includes(key))
+      || (musicMode && !['format', 'audioCodec', 'duration'].includes(key));
     output.textContent = details[key] || 'Not reported';
     output.classList.toggle('not-reported', !details[key]);
   }
-  const status = inspection ? 'Reading video details…'
+  const status = inspection || musicProbe ? 'Reading media details…'
     : loading ? 'Waiting for the media to open…'
     : inspectionFailed && source.kind === 'direct' ? 'This server didn’t provide the file metadata to Kahve. Playback details are shown when available.'
     : inspectionFailed ? 'Kahve couldn’t read the file metadata. Playback details are shown when available.'
@@ -232,7 +258,7 @@ function renderVideoInfo() {
 
 async function readVideoInfo() {
   if (!infoDialog.open) return;
-  if (!source || ['hls', 'dash', 'image'].includes(source.kind) || inspected || inspection || inspectionFailed) {
+  if (!source || ['hls', 'dash', 'image'].includes(source.kind) || inspected || inspection || inspectionFailed || musicProbe) {
     renderVideoInfo();
     return;
   }
@@ -298,7 +324,7 @@ function updateControls() {
 function wakeControls() {
   stage.classList.remove('controls-hidden');
   clearTimeout(controlsTimer);
-  if (!video.paused && !openMenu) {
+  if (!video.paused && !openMenu && !musicMode) {
     controlsTimer = setTimeout(() => {
       if (!stage.querySelector(':focus-visible') && !stage.querySelector('.controls:hover, .stage-top:hover')) {
         stage.classList.add('controls-hidden');
@@ -350,6 +376,93 @@ function skip(seconds) {
   wakeControls();
 }
 
+function clearMusicCover() {
+  const cover = $('music-cover');
+  cover.hidden = true;
+  cover.removeAttribute('src');
+  if (musicArtworkUrl) URL.revokeObjectURL(musicArtworkUrl);
+  musicArtworkUrl = '';
+  $('music-card').classList.remove('has-cover');
+}
+
+function showMusicTags(tags = {}) {
+  $('music-track').textContent = tags.track || source?.title.replace(/\.[^.]+$/, '') || 'Unknown track';
+  $('music-artist').textContent = tags.artist || 'Unknown artist';
+  $('music-album').textContent = tags.album || 'Unknown album';
+  if (!tags.cover) return;
+  clearMusicCover();
+  const cover = $('music-cover');
+  const url = URL.createObjectURL(tags.cover);
+  musicArtworkUrl = url;
+  cover.src = url;
+  void cover.decode().then(() => {
+    if (url !== musicArtworkUrl) return;
+    cover.hidden = false;
+    $('music-card').classList.add('has-cover');
+  }).catch(() => {
+    if (url === musicArtworkUrl) clearMusicCover();
+  });
+}
+
+function resetMusic() {
+  musicMode = false;
+  musicProbe?.abort();
+  musicProbe = undefined;
+  musicAttempted = false;
+  clearMusicCover();
+}
+
+async function readMusicTags() {
+  if (musicAttempted || !source || (!source.file && source.kind !== 'direct')) return;
+  musicAttempted = true;
+  const current = source;
+  const controller = new AbortController();
+  musicProbe = controller;
+  try {
+    const { inspectMedia } = await import('./media-info.js');
+    controller.signal.throwIfAborted();
+    const details = await inspectMedia(current, controller.signal, { includeCover: true });
+    if (musicProbe !== controller) return;
+    const { music, ...metadata } = details;
+    inspected ??= metadata;
+    showMusicTags(music);
+  } catch {
+    // The player keeps its filename and unknown-tag fallbacks if artwork or tags can't be read.
+  } finally {
+    if (musicProbe === controller) {
+      musicProbe = undefined;
+      renderVideoInfo();
+    }
+  }
+}
+
+function syncMediaPresentation() {
+  const image = source?.kind === 'image';
+  stage.classList.toggle('audio-only', musicMode);
+  $('music-viewer').hidden = !musicMode;
+  $('hdr').hidden = image || musicMode;
+  $('video-info-title').textContent = image ? 'Image info' : musicMode ? 'Audio info' : 'Video info';
+  setIcon('video-info', 'Info', $('video-info-title').textContent);
+  const label = { image: 'IMAGE', local: musicMode ? 'AUDIO FILE' : 'LOCAL FILE', direct: 'VIDEO LINK', hls: 'HLS STREAM', dash: 'DASH STREAM' };
+  $('source-tag').textContent = label[source?.kind] ?? 'NO MEDIA';
+}
+
+function refreshMusicMode() {
+  if (!source || source.kind === 'image' || loading || video.readyState < 1 || failed) return;
+  const audio = video.videoWidth === 0 && video.videoHeight === 0;
+  if (audio === musicMode) return;
+  if (audio) {
+    musicMode = true;
+    showMusicTags();
+    void readMusicTags();
+  } else {
+    resetMusic();
+  }
+  syncMediaPresentation();
+  wakeControls();
+  renderVideoInfo();
+}
+
 function updateSourceInfo() {
   const image = source?.kind === 'image';
   const title = $('media-title');
@@ -357,14 +470,15 @@ function updateSourceInfo() {
   title.title = title.textContent;
   title.hidden = !source;
   $('empty-state').hidden = Boolean(source);
-  const label = { image: 'IMAGE', local: 'LOCAL FILE', direct: 'VIDEO LINK', hls: 'HLS STREAM', dash: 'DASH STREAM' };
-  $('source-tag').textContent = label[source?.kind] ?? 'NO MEDIA';
   document.title = source ? `Kahve Player — ${source.title}` : 'Kahve Player';
   stage.classList.toggle('viewing-image', image);
   imageViewport.hidden = !image;
-  $('hdr').hidden = image;
-  $('video-info-title').textContent = image ? 'Image info' : 'Video info';
-  setIcon('video-info', 'Info', $('video-info-title').textContent);
+  if (source?.audioHint) {
+    musicMode = true;
+    showMusicTags();
+    void readMusicTags();
+  }
+  syncMediaPresentation();
 }
 
 function clearExternalTracks() {
@@ -390,6 +504,7 @@ function loadSource(next, { autoplay = false } = {}) {
   video.pause();
   if (openMenu !== 'playlist') closeMenu();
   source = next;
+  resetMusic();
   inspection?.abort();
   inspection = null;
   inspected = null;
@@ -401,7 +516,7 @@ function loadSource(next, { autoplay = false } = {}) {
   $('hdr').classList.remove('selected');
   updateSourceInfo();
   updatePlaylistUI();
-  message(next ? `Opening ${next.kind === 'image' ? 'image' : 'video'}…` : '', 'loading');
+  message(next ? `Opening ${next.kind === 'image' ? 'image' : next.audioHint ? 'audio' : 'video'}…` : '', 'loading');
   wakeControls();
   updateControls();
   void readVideoInfo();
@@ -445,6 +560,7 @@ function loadSource(next, { autoplay = false } = {}) {
       if (request !== sourceRequest || failed) return;
       loading = false;
       message();
+      refreshMusicMode();
       updateControls();
       renderVideoInfo();
       if (next.kind !== 'image') {
@@ -598,14 +714,185 @@ function renderHdrMenu() {
   menuNote('HDR output depends on Chrome, your system, and your display. This doesn’t change the system HDR setting.');
 }
 
+function playlistAction(label, action, attributes = {}) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'toolbar-button';
+  button.textContent = label;
+  for (const [key, value] of Object.entries(attributes)) button.setAttribute(key, value);
+  button.addEventListener('click', action);
+  return button;
+}
+
+function showQueue(focus = '.playlist-load') {
+  libraryView = null;
+  renderMenu();
+  menu.querySelector(focus)?.focus({ preventScroll: true });
+}
+
+function showSavePlaylist() {
+  if (!playlist.length) return;
+  libraryView = { mode: 'save', name: playlist[0].title.replace(/\.[^.]+$/, '').slice(0, 100), status: '' };
+  renderMenu();
+  const input = menu.querySelector('input');
+  input.focus();
+  input.select();
+}
+
+async function showSavedPlaylists() {
+  const view = { mode: 'load', items: [], busy: true, status: 'Reading saved playlists…' };
+  libraryView = view;
+  renderMenu();
+  menu.querySelector('.playlist-back')?.focus();
+  try {
+    view.items = await listSavedPlaylists();
+    view.status = view.items.length ? '' : 'No saved playlists in this browser yet.';
+  } catch {
+    view.status = 'Saved playlists are unavailable in this browser.';
+  } finally {
+    view.busy = false;
+    if (libraryView === view) renderMenu(true);
+  }
+}
+
+function renderPlaylistLibrary(view) {
+  const header = document.createElement('div');
+  header.className = 'playlist-library-header';
+  header.append(playlistAction('Back', () => {
+    if (view.mode === 'delete') void showSavedPlaylists();
+    else showQueue(view.mode === 'save' ? '.playlist-save' : '.playlist-load');
+  }, { class: 'toolbar-button playlist-back' }));
+  const heading = document.createElement('h3');
+  heading.textContent = { save: 'Save playlist', load: 'Load playlist', delete: 'Remove saved playlist' }[view.mode];
+  header.append(heading);
+  menu.append(header);
+
+  if (view.mode === 'save') {
+    const form = document.createElement('form');
+    form.className = 'playlist-save-form';
+    form.innerHTML = `<label for="playlist-name">Playlist name</label><input id="playlist-name" required maxlength="100" autocomplete="off">
+      <button type="submit" class="primary-button">Save playlist</button>`;
+    const input = form.querySelector('input');
+    input.value = view.name;
+    input.disabled = form.querySelector('button').disabled = Boolean(view.busy);
+    input.addEventListener('input', () => { view.name = input.value; input.setCustomValidity(''); });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const name = input.value.trim();
+      if (!name) {
+        input.setCustomValidity('Enter a playlist name.');
+        input.reportValidity();
+        return;
+      }
+      const entries = playlist.map((item) => ({ ...item, subtitles: item.subtitles?.slice() }));
+      const activeIndex = playlistIndex;
+      view.busy = true;
+      view.status = 'Saving playlist…';
+      renderMenu();
+      try {
+        await savePlaylist(name, entries, activeIndex);
+        if (libraryView === view) {
+          showQueue('.playlist-save');
+          notify(`Saved “${name}” in this browser.`);
+        }
+      } catch (error) {
+        view.busy = false;
+        view.status = error?.name === 'QuotaExceededError'
+          ? 'Not enough browser storage for these files. Try a smaller playlist.'
+          : 'Couldn’t save this playlist. Check that browser storage is available.';
+        if (libraryView === view) {
+          renderMenu();
+          menu.querySelector('input')?.focus();
+        }
+      }
+    });
+    menu.append(form);
+    menuNote('The playlist and copies of local files are saved in this browser, not uploaded.');
+  } else if (view.mode === 'delete') {
+    menuNote(`Remove “${view.item.name}” from this browser’s saved playlists? This won’t delete your original files.`);
+    const actions = document.createElement('div');
+    actions.className = 'playlist-actions';
+    const remove = playlistAction('Remove saved playlist', async () => {
+      view.busy = true;
+      renderMenu();
+      try {
+        await deleteSavedPlaylist(view.item.id);
+        if (libraryView === view) void showSavedPlaylists();
+      } catch {
+        view.busy = false;
+        view.status = 'Couldn’t remove the saved playlist.';
+        if (libraryView === view) renderMenu();
+      }
+    });
+    remove.disabled = Boolean(view.busy);
+    actions.append(remove, playlistAction('Cancel', showSavedPlaylists));
+    menu.append(actions);
+  } else if (view.items.length) {
+    const list = document.createElement('ul');
+    list.className = 'playlist-items saved-playlists';
+    for (const item of view.items) {
+      const row = document.createElement('li');
+      row.className = 'playlist-row';
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'menu-item playlist-entry';
+      open.innerHTML = `${icon('ListVideo')}<span></span><small></small>`;
+      open.querySelector('span').textContent = item.name;
+      open.querySelector('small').textContent = `${item.count} · ${new Date(item.savedAt).toLocaleDateString()}`;
+      open.title = item.name;
+      open.disabled = view.busy;
+      open.addEventListener('click', async () => {
+        view.busy = true;
+        view.status = 'Loading playlist…';
+        renderMenu();
+        try {
+          const saved = await loadSavedPlaylist(item.id);
+          if (!saved?.entries?.length) throw new Error('Saved playlist is missing.');
+          if (libraryView !== view) return;
+          libraryView = null;
+          setPlaylist(saved.entries, false, saved.activeIndex);
+          menu.querySelector('[aria-current="true"]')?.focus({ preventScroll: true });
+        } catch {
+          view.busy = false;
+          view.status = 'Couldn’t load this saved playlist.';
+          if (libraryView === view) renderMenu();
+        }
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'icon-button playlist-remove';
+      remove.innerHTML = icon('X');
+      remove.setAttribute('aria-label', `Remove saved playlist ${item.name}`);
+      remove.disabled = view.busy;
+      remove.addEventListener('click', () => {
+        libraryView = { mode: 'delete', item };
+        renderMenu();
+        menu.querySelector('.playlist-back')?.focus();
+      });
+      row.append(open, remove);
+      list.append(row);
+    }
+    menu.append(list);
+  }
+
+  if (view.status) {
+    const status = document.createElement('p');
+    status.className = 'menu-note';
+    status.setAttribute('role', 'status');
+    status.textContent = view.status;
+    menu.append(status);
+  }
+}
+
 function renderPlaylist() {
+  if (libraryView) return renderPlaylistLibrary(libraryView);
   const heading = document.createElement('div');
   heading.className = 'playlist-heading';
   heading.innerHTML = '<h3>Playlist</h3><span></span>';
   heading.lastElementChild.textContent = `${playlist.length} ${playlist.length === 1 ? 'item' : 'items'}`;
   menu.append(heading);
   if (!playlist.length) {
-    menuNote('Drop videos or images here to queue them, or use Add files.');
+    menuNote('Drop videos, music, or images here, or use Add files.');
   } else {
     const list = document.createElement('ol');
     list.className = 'playlist-items';
@@ -616,7 +903,7 @@ function renderPlaylist() {
       select.type = 'button';
       select.className = 'menu-item playlist-entry';
       select.title = entry.title;
-      select.innerHTML = `${icon(entry.kind === 'image' ? 'Image' : 'Film')}<span></span>`;
+      select.innerHTML = `${icon(entry.kind === 'image' ? 'Image' : entry.audioHint ? 'Music2' : 'Film')}<span></span>`;
       select.lastElementChild.textContent = entry.title;
       if (index === playlistIndex) {
         select.setAttribute('aria-current', 'true');
@@ -637,11 +924,13 @@ function renderPlaylist() {
   }
   const actions = document.createElement('div');
   actions.className = 'playlist-actions';
-  actions.innerHTML = `<button type="button" class="toolbar-button">${icon('Plus')}Add files…</button>
-    <button type="button" class="toolbar-button playlist-clear">Clear playlist</button>`;
-  actions.firstElementChild.addEventListener('click', () => pickFiles(true));
-  actions.lastElementChild.disabled = !playlist.length;
-  actions.lastElementChild.addEventListener('click', () => setPlaylist([]));
+  const add = playlistAction('Add files…', () => pickFiles(true));
+  add.insertAdjacentHTML('afterbegin', icon('Plus'));
+  const save = playlistAction('Save…', showSavePlaylist, { class: 'toolbar-button playlist-save', 'aria-label': 'Save playlist' });
+  const load = playlistAction('Load…', showSavedPlaylists, { class: 'toolbar-button playlist-load', 'aria-label': 'Load playlist' });
+  const clear = playlistAction('Clear', () => setPlaylist([]), { class: 'toolbar-button playlist-clear', 'aria-label': 'Clear playlist' });
+  save.disabled = clear.disabled = !playlist.length;
+  actions.append(add, save, load, clear);
   menu.append(actions);
 }
 
@@ -733,6 +1022,7 @@ function closeMenu(focus = false) {
   if (!openMenu) return;
   const trigger = $(openMenu);
   openMenu = '';
+  libraryView = null;
   trigger.setAttribute('aria-expanded', 'false');
   menu.hidden = true;
   if (focus) trigger.focus();
@@ -770,7 +1060,7 @@ function updatePlaylistUI() {
   $('playlist').classList.toggle('selected', playlist.length > 1);
   $('image-position').hidden = source?.kind !== 'image';
   $('image-position').textContent = source?.kind === 'image' ? `Image ${playlistIndex + 1} of ${playlist.length}` : '';
-  if (openMenu === 'playlist') renderMenu(true);
+  if (openMenu === 'playlist' && !libraryView) renderMenu(true);
 }
 
 function playPlaylistItem(index) {
@@ -784,7 +1074,7 @@ function movePlaylist(delta) {
   playPlaylistItem(playlistIndex + delta);
 }
 
-function setPlaylist(entries, append = false) {
+function setPlaylist(entries, append = false, activeIndex = 0) {
   if (append && playlistIndex >= 0 && entries.length) {
     playlist = playlist.concat(entries);
     updatePlaylistUI();
@@ -792,7 +1082,7 @@ function setPlaylist(entries, append = false) {
   }
   playlist = entries;
   playlistIndex = -1;
-  if (playlist.length) playPlaylistItem(0);
+  if (playlist.length) playPlaylistItem(Math.max(0, Math.min(playlist.length - 1, activeIndex)));
   else void loadSource(null);
   return false;
 }
@@ -846,6 +1136,7 @@ async function fullscreen() {
 }
 
 for (const type of mediaEvents) video.addEventListener(type, updateControls);
+for (const type of ['loadedmetadata', 'resize']) video.addEventListener(type, refreshMusicMode);
 for (const type of ['loadedmetadata', 'resize', 'durationchange']) video.addEventListener(type, renderVideoInfo);
 video.addEventListener('playing', () => {
   hasPlayed = true;
@@ -918,6 +1209,8 @@ $('file-input').addEventListener('change', (event) => {
   void openFiles(event.target.files, appendPickedFiles);
   event.target.value = '';
 });
+$('initial-files').addEventListener('click', () => pickFiles());
+$('initial-streams').addEventListener('click', () => streamDialog.showModal());
 $('subtitle-input').addEventListener('change', (event) => {
   if (event.target.files[0]) void addSubtitles(event.target.files[0]);
   event.target.value = '';

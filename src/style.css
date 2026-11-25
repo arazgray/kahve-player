@@ -99,11 +99,45 @@ svg { display: block; width: 20px; height: 20px; flex: none; }
   text-align: center; pointer-events: none;
 }
 .empty-icon {
-  width: 52px; height: 52px; border: 1px solid #443228; border-radius: 13px; margin-bottom: 14px;
+  width: 80px; height: 58px; object-fit: contain; margin-bottom: 13px;
 }
 .empty-state h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
 .empty-state p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.empty-state strong { color: #e1c6b3; }
+.empty-actions {
+  display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 18px;
+  pointer-events: auto;
+}
+.empty-actions button { min-height: 38px; padding-inline: 12px; }
+.coming-soon {
+  border: 1px solid currentColor; border-radius: 4px; padding: 1px 4px;
+  font-size: 8px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+}
+.music-viewer {
+  position: absolute; inset: var(--toolbar-height) 16px 65px; display: grid; place-items: center;
+  pointer-events: none; overflow: hidden;
+}
+.music-card {
+  width: min(450px, 100%); display: grid; justify-items: center; gap: 16px; text-align: center;
+}
+.music-cover {
+  display: block; width: min(248px, 100%, 40dvh); aspect-ratio: 1; object-fit: contain;
+  border: 1px solid #443228; border-radius: 12px; background: #211915;
+  box-shadow: 0 20px 60px #0007;
+}
+.music-copy { width: 100%; min-width: 0; }
+.music-card:not(.has-cover) .music-copy {
+  border: 1px solid #443228; border-radius: 14px; padding: 20px 14px; background: #1a1512;
+}
+.music-copy .eyebrow { justify-content: center; }
+.music-copy .eyebrow svg { width: 15px; height: 15px; }
+.music-copy h2 {
+  margin: 7px 0 10px; color: #f7eae0; font-size: clamp(19px, 4vw, 27px);
+  line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.music-tags { display: flex; justify-content: center; gap: 16px; margin: 0; }
+.music-tags > div { min-width: 0; }
+.music-tags dt { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .09em; }
+.music-tags dd { color: #ebe1d9; font-size: 13px; margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hero-play {
   position: absolute; left: 50%; top: 49%; transform: translate(-50%, -50%); display: grid; place-items: center;
   width: 77px; height: 77px; border: 1px solid #ffe6d3a8; border-radius: 50%; color: #fff8ef;
@@ -218,8 +252,18 @@ input[type="range"]::-moz-range-thumb { width: var(--thumb); height: var(--thumb
 .playlist-entry:not([aria-current]) svg { color: #bda89a; }
 .playlist-remove { width: 29px; height: 29px; color: #c4b2a4; }
 .playlist-remove svg { width: 15px; height: 15px; }
-.playlist-actions { border-top: 1px solid #ffffff12; padding: 7px 2px 2px; display: flex; justify-content: space-between; gap: 8px; }
+.playlist-actions { border-top: 1px solid #ffffff12; padding: 7px 2px 2px; display: flex; flex-wrap: wrap; gap: 6px; }
 .playlist-clear { background: transparent; border-color: transparent; color: #c4b2a4; }
+.playlist-actions .playlist-clear { margin-left: auto; }
+.playlist-library-header { display: flex; gap: 5px; align-items: center; }
+.playlist-save-form { display: grid; gap: 7px; padding: 6px 6px 0; }
+.playlist-save-form label { color: #dfcec0; font-size: 12px; font-weight: 700; }
+.playlist-save-form input {
+  min-width: 0; min-height: 34px; padding: 7px 9px; border: 1px solid #534033; border-radius: 6px;
+  background: #110e0c; color: #f6ebe1;
+}
+.playlist-save-form .primary-button { justify-self: start; }
+.saved-playlists .menu-item small { flex: none; font-size: 10px; white-space: nowrap; }
 
 .dialog {
   width: min(460px, calc(100% - 36px)); padding: 24px; border: 1px solid #584132; border-radius: 17px;
@@ -283,6 +327,14 @@ kbd { display: inline-grid; min-width: 23px; min-height: 23px; place-items: cent
   .controls #pip { display: none; }
   .source-info .source-tag { display: none; }
   .stage-top:has(#install:not([hidden])) #shortcuts { display: none; }
+}
+@media (max-height: 460px) and (min-width: 460px) {
+  .music-card.has-cover { grid-template-columns: auto minmax(0, 1fr); align-items: center; text-align: left; }
+  .music-card.has-cover .music-copy .eyebrow, .music-card.has-cover .music-tags { justify-content: flex-start; }
+}
+@media (max-height: 320px) {
+  .empty-icon, .empty-state p { display: none; }
+  .empty-actions { margin-top: 9px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0s !important; }

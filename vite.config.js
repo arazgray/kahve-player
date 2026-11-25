@@ -6,7 +6,6 @@ export default defineConfig({
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['kahve.svg'],
       manifest: {
         name: 'Kahve Player',
         short_name: 'Kahve',
@@ -17,8 +16,9 @@ export default defineConfig({
         background_color: '#11100f',
         theme_color: '#171412',
         icons: [
-          { src: 'kahve-coffee-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-          { src: 'kahve-coffee-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          { src: 'kahve-logo-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'kahve-logo-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'kahve-logo-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {

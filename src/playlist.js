@@ -1,5 +1,6 @@
 const imageExtensions = /\.(avif|bmp|gif|ico|jpe?g|jfif|png|apng|svg|webp|heic|heif|tiff?)$/i;
 const mediaExtensions = /\.(avi|flac|m4a|m4v|mka|mkv|mov|mp[234]|mpg|mpeg|oga|ogg|ogv|opus|ts|wav|webm)$/i;
+const audioExtensions = /\.(aac|aiff?|alac|ape|flac|m4a|mka|mp[23]|oga|opus|wav|wma)$/i;
 const subtitleExtensions = /\.(srt|vtt)$/i;
 const stem = (name) => name.replace(/\.[^.]+$/, '').toLowerCase();
 
@@ -11,8 +12,9 @@ export function collectFiles(files) {
     if (subtitleExtensions.test(file.name)) subtitles.push(file);
     else if (file.type.startsWith('image/') || imageExtensions.test(file.name)) {
       entries.push({ kind: 'image', title: file.name, file });
-    } else if (/^(video|audio)\//.test(file.type) || mediaExtensions.test(file.name)) {
-      entries.push({ kind: 'local', title: file.name, file });
+    } else if (/^(video|audio)\//.test(file.type) || mediaExtensions.test(file.name) || audioExtensions.test(file.name)) {
+      const audioHint = file.type.startsWith('audio/') || audioExtensions.test(file.name);
+      entries.push({ kind: 'local', title: file.name, file, audioHint });
     } else skipped++;
   }
   const videos = entries.filter((entry) => entry.kind === 'local');

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/kahve-coffee-192.png" alt="" width="76" height="76">
+  <img src="Kahve.png" alt="" width="88">
 </p>
 <h1 align="center">Kahve Player</h1>
 <p align="center"><strong>A small player for whatever you’re in the mood to watch.</strong></p>
@@ -11,9 +11,11 @@
 
 ## Bring your own media
 
-Kahve opens to an empty player, not a home page. Drop in a video, a folder’s worth of selected photos, or a mix of both. The files stay on your device.
+Kahve opens to an empty player with **Open Files**, **Open Streams**, and a disabled **Open IPTV** button for future support. Drop in videos, music, photos, or a mix. The files stay on your device.
 
-- **Build a queue.** Drop more files to append them without interrupting playback. Use **Playlist** to jump to an item, remove it, or clear the queue. Videos advance when they finish; images wait for you and crossfade when you move between them.
+- **Build a queue.** Drop more files to append them without interrupting playback. Use **Playlist** to jump to an item, remove it, or clear the queue. **Save** and **Load** keep named playlists, including copies of their local files, in this browser. They don’t sync across devices and can be removed from the **Load** screen.
+- **Play music.** Kahve shows embedded cover art when available. With or without art, it shows the track, artist, and album from the file’s tags.
+- **Browse images.** Videos and music advance when they finish; images wait for you and crossfade as you move between them.
 - **Open a stream.** Paste an HLS, DASH, or direct video URL through the **Open** menu. Adaptive streams can expose audio and subtitle tracks, automatic or manual quality, and a choice of HDR or SDR renditions.
 - **Make it watchable your way.** Add `.srt` or `.vtt` subtitles, adjust playback speed, or use fullscreen or picture-in-picture. The **Info** button shows available codec, frame rate, resolution, and other media details.
 

@@ -4,6 +4,8 @@ import { extname } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
 const localClip = fileURLToPath(new URL('./fixtures/playback.mp4', import.meta.url));
+const coveredTrack = fileURLToPath(new URL('./fixtures/cover.mp3', import.meta.url));
+const unillustratedTrack = fileURLToPath(new URL('./fixtures/tags.mp3', import.meta.url));
 const duration = (page) => page.locator('#video').evaluate((video) => video.duration);
 const playhead = (page) => page.locator('#video').evaluate((video) => video.currentTime);
 const mediaTypes = {
@@ -215,9 +217,13 @@ test('opts into native window controls and follows changes in title-bar geometry
 });
 
 test('uses consistent app artwork and only offers installation on a browser prompt', async ({ page }) => {
-  const appArtwork = await page.locator('link[rel="icon"]').getAttribute('href');
-  await expect(page.locator('.brand-mark')).toHaveAttribute('src', appArtwork);
-  await expect(page.locator('.empty-icon')).toHaveAttribute('src', appArtwork);
+  const appArtwork = await page.locator('link[rel="icon"]').evaluate((link) => link.href);
+  expect(await page.locator('.brand-mark').evaluate((image) => image.src)).toBe(appArtwork);
+  expect(await page.locator('.empty-icon').evaluate((image) => image.src)).toBe(appArtwork);
+  const manifest = await page.request.get('/manifest.webmanifest');
+  expect((await manifest.json()).icons.map((icon) => icon.src)).toEqual([
+    'kahve-logo-192.png', 'kahve-logo-512.png', 'kahve-logo-maskable.png',
+  ]);
   const install = page.getByRole('button', { name: 'Install app' });
   await expect(install).toBeHidden();
   await page.evaluate(() => window.dispatchEvent(new Event('beforeinstallprompt', { cancelable: true })));
@@ -288,4 +294,52 @@ test('advances from a finished video into the next image in a mixed playlist', a
   await page.getByRole('button', { name: 'Previous item' }).click();
   await expect(page.locator('#media-title')).toHaveText('Clip.mp4');
   await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
+});
+
+test('offers Open Files, Open Streams and disabled IPTV from the empty player', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Open IPTV' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Open Streams', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Open a stream' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Open Files', exact: true }).click();
+  await (await chooser).setFiles(localClip);
+  await expect(page.locator('#media-title')).toHaveText('playback.mp4');
+});
+
+test('displays embedded album artwork and falls back to tagged artist, track and album', async ({ page }) => {
+  await page.locator('#file-input').setInputFiles([coveredTrack, unillustratedTrack]);
+  await expect(page.getByRole('img', { name: 'Album artwork' })).toBeVisible();
+  await expect(page.locator('#music-track')).toHaveText('Copper Hour');
+  await expect.poll(() => playhead(page)).toBeGreaterThan(0.1);
+  await page.getByRole('button', { name: 'Next item' }).click();
+  await expect(page.locator('#music-track')).toHaveText('Paper Moon');
+  await expect(page.locator('#music-artist')).toHaveText('The Test Ensemble');
+  await expect(page.locator('#music-album')).toHaveText('Studio Notes');
+  await expect(page.getByRole('img', { name: 'Album artwork' })).toBeHidden();
+});
+
+test('saves and loads ordered local files and the current item across an offline reload', async ({ page, context }) => {
+  await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+  await page.locator('#file-input').setInputFiles([testImage('First', 'orange'), testImage('Second', 'blue')]);
+  await page.getByRole('button', { name: 'Next item' }).click();
+  await expect(page.getByRole('img', { name: 'Second.svg' })).toBeVisible();
+  await page.getByRole('button', { name: 'Playlist', exact: true }).click();
+  const playlist = page.getByRole('region', { name: 'Playlist' });
+  await playlist.getByRole('button', { name: 'Save playlist', exact: true }).click();
+  await playlist.getByLabel('Playlist name').fill('Morning queue');
+  await playlist.getByRole('button', { name: 'Save playlist', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved “Morning queue”' })).toBeVisible();
+  await context.setOffline(true);
+  await page.reload();
+  await page.getByRole('button', { name: 'Playlist', exact: true }).click();
+  await playlist.getByRole('button', { name: 'Load playlist', exact: true }).click();
+  await playlist.getByRole('button', { name: /^Morning queue/ }).click();
+  await expect(page.getByRole('img', { name: 'Second.svg' })).toBeVisible();
+  await expect(playlist.locator('.playlist-entry')).toHaveText(['First.svg', 'Second.svg']);
+  await playlist.getByRole('button', { name: 'Load playlist', exact: true }).click();
+  await playlist.getByRole('button', { name: 'Remove saved playlist Morning queue' }).click();
+  await playlist.getByRole('button', { name: 'Remove saved playlist', exact: true }).click();
+  await expect(playlist).toContainText('No saved playlists in this browser yet.');
+  await expect(page.getByRole('img', { name: 'Second.svg' })).toBeVisible();
 });

@@ -49,12 +49,26 @@ function format(track) {
   return track?.Format;
 }
 
-export async function inspectMedia(source, abortSignal) {
+function artwork(track) {
+  const mime = track?.Cover_Mime?.toLowerCase();
+  const data = track?.Cover_Data;
+  if (!/^image\/(jpeg|png|webp|gif|bmp|avif)$/.test(mime ?? '') || !data || data.length > 12 * 1024 * 1024) return null;
+  try {
+    const raw = atob(data);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  } catch {
+    return null;
+  }
+}
+
+export async function inspectMedia(source, abortSignal, { includeCover = false } = {}) {
   const remote = !source.file;
   const signal = remote ? AbortSignal.any([abortSignal, AbortSignal.timeout(8000)]) : abortSignal;
   const size = remote ? (await readRange(source.url, 0, 0, signal)).size : source.file.size;
   if (!size) return {};
-  const reader = await mediaInfoFactory({ locateFile: () => wasmUrl, chunkSize });
+  const reader = await mediaInfoFactory({ locateFile: () => wasmUrl, chunkSize, coverData: includeCover });
   let read = 0;
   try {
     signal.throwIfAborted();
@@ -69,14 +83,21 @@ export async function inspectMedia(source, abortSignal) {
     });
     const track = (type) => result.media?.track.find((entry) => entry['@type'] === type);
     const video = track('Video');
+    const general = track('General');
     return {
-      format: format(track('General')),
+      format: format(general),
       videoCodec: codec(video),
       audioCodec: codec(track('Audio')),
       width: Number(video?.Width),
       height: Number(video?.Height),
       frameRate: Number(video?.FrameRate),
       variableRate: /^vfr$/i.test(video?.FrameRate_Mode ?? ''),
+      ...(includeCover && { music: {
+        track: general?.Track || general?.Title,
+        artist: general?.Performer || general?.Album_Performer,
+        album: general?.Album,
+        cover: artwork(general),
+      } }),
     };
   } finally {
     reader.close();
