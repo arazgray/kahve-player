@@ -2,7 +2,7 @@
   <img src="Kahve.png" alt="" width="88">
 </p>
 <h1 align="center">Kahve Player</h1>
-<p align="center">Ridiculysly fast and capable <strong>Video</strong>, <strong>Photo</strong> and <strong>Music</strong> Player based on Chrome</p>
+<p align="center">Ridiculously fast and capable video, photo, and music player based on Chrome.</p>
 <p align="center"><a href="https://arazgray.github.io/kahve-player/"><strong>Open Kahve in Chrome →</strong></a></p>
 
 I was getting tired of dealing with HDR issues on Linux. Recently, I discovered that Chrome actually supports HDR, and it handles high-bitrate videos much more efficiently than VLC or other media players. So I decided to build this for myself.
